@@ -37,8 +37,9 @@
         import React, { useState, useEffect, useRef, useCallback } from 'react';
         import ReactDOM from 'react-dom/client';
         import * as THREE from 'three';
+        import { Shield, Zap, ArrowLeft, RotateCcw, Trash2, Swords, Wallet, Move, Rocket, Crosshair } from 'lucide-react';
         
-        // --- CONSTANTS & TYPES ---
+        // --- CONSTANTS ---
         const SAVE_KEY = 'missile_fun_standalone_v1';
 
         const STAGES = [
@@ -60,7 +61,7 @@
         ];
 
         const INITIAL_STATE = {
-            money: 100, // STARTING MONEY 100
+            money: 100, 
             health: 100,
             wave: 1,
             unlockedStage: 1,
@@ -108,7 +109,6 @@
                 this.spawnTimer = 0;
                 this.regenCounters = { normal: 0, big: 0, nuke: 0 };
                 
-                // Casual Mode
                 this.casualSpawnCounter = 0;
                 this.casualSpawnFreq = 60;
                 this.particleCount = 600; 
@@ -119,7 +119,7 @@
                 this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
                 this.camera.position.set(0, 0, 50);
                 
-                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
                 this.renderer.setSize(window.innerWidth, window.innerHeight);
                 this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
                 this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -166,16 +166,15 @@
                 const geoms = this.geometries;
                 // NEW NUKE MODEL: GBU-57 Improved
                 geoms.nukeMain = new THREE.CylinderGeometry(1.0, 1.0, 7.5, 16); 
-                geoms.nukeNose = new THREE.ConeGeometry(1.0, 2.0, 16); // Nose cone
-                geoms.nukeFin = new THREE.BoxGeometry(0.1, 1.8, 1.0); // Grid fin paddle
-                geoms.nukeTail = new THREE.CylinderGeometry(0.8, 1.0, 1.0, 16); // Tail taper
+                geoms.nukeNose = new THREE.ConeGeometry(1.0, 2.0, 16); 
+                geoms.nukeFin = new THREE.BoxGeometry(0.1, 1.8, 1.0); 
+                geoms.nukeTail = new THREE.CylinderGeometry(0.8, 1.0, 1.0, 16); 
 
                 geoms.bigBody = new THREE.CylinderGeometry(0.6, 0.6, 3.5, 12);
                 geoms.bigNose = new THREE.SphereGeometry(0.6, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
                 geoms.smallBody = new THREE.CylinderGeometry(0.2, 0.2, 3.0, 8);
                 geoms.smallHead = new THREE.SphereGeometry(0.2, 8, 8, 0, Math.PI*2, 0, Math.PI/2);
                 
-                // Enemy/Boss Geoms
                 geoms.bossMain = new THREE.CylinderGeometry(4, 3, 8, 6);
                 geoms.bossWing = new THREE.BoxGeometry(12, 2, 4);
                 geoms.bossCore = new THREE.IcosahedronGeometry(2, 2);
@@ -186,7 +185,6 @@
                 geoms.hpFg = new THREE.PlaneGeometry(2.9, 0.3);
                 geoms.hpFg.translate(1.45, 0, 0);
 
-                // Enemy Types
                 geoms.scoutRing = new THREE.TorusGeometry(1.2, 0.2, 8, 16); 
                 geoms.scoutEye = new THREE.SphereGeometry(0.6, 16, 16);
                 geoms.fighterBody = new THREE.ConeGeometry(0.8, 3.5, 4);
@@ -198,7 +196,6 @@
                 geoms.droneSpike = new THREE.ConeGeometry(0.2, 1.2, 8);
                 
                 const mats = this.materials;
-                // NUKE MAT: Dark Grey
                 mats.nukeBody = new THREE.MeshStandardMaterial({ color: 0x445566, roughness: 0.4, metalness: 0.5 }); 
                 mats.nukeFins = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 });
                 
@@ -221,7 +218,7 @@
             createBarriers() {
                 if (this.barriers) return;
                 this.barriers = new THREE.Group();
-                // EXACT ARENA WIDTH: 35
+                // WIDTH 35
                 const left = new THREE.Mesh(this.geometries.barrierPole, this.materials.barrierGlow);
                 left.position.set(-35, 0, 0);
                 const right = new THREE.Mesh(this.geometries.barrierPole, this.materials.barrierGlow);
@@ -385,18 +382,14 @@
             createMissileGroup(type) {
                 const g = new THREE.Group();
                 if (type === 'nuke') {
-                    // GBU-57 Style - Improved
                     const body = new THREE.Mesh(this.geometries.nukeMain, this.materials.nukeBody); 
                     body.rotation.x = Math.PI/2;
                     const nose = new THREE.Mesh(this.geometries.nukeNose, this.materials.nukeBody);
-                    nose.position.y = 4.75; // Top of cylinder
+                    nose.position.y = 4.75; 
                     body.add(nose);
-                    
                     const tail = new THREE.Mesh(this.geometries.nukeTail, this.materials.nukeBody);
                     tail.position.y = -4.25;
                     body.add(tail);
-
-                    // Grid Fins (Paddle style)
                     for(let i=0; i<4; i++) {
                         const fin = new THREE.Mesh(this.geometries.nukeFin, this.materials.nukeFins);
                         fin.position.set(0, -4.5, 0);
@@ -481,7 +474,6 @@
                 const positions = new Float32Array(count * 3);
                 const velocities = [];
                 const colors = [];
-                // GREEN PALETTE
                 const palette = [0x00ff00, 0x33ff33, 0x008800, 0xccffcc]; 
                 for(let i=0; i<count; i++) {
                     positions[i*3] = pos.x; positions[i*3+1] = pos.y; positions[i*3+2] = pos.z;
@@ -499,7 +491,6 @@
                     center: pos.clone(), radius: effectiveRad 
                 });
 
-                // GREEN FIREBALL
                 const fireball = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 32), new THREE.MeshBasicMaterial({ color: 0xaaffaa, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending }));
                 fireball.position.copy(pos);
                 this.scene.add(fireball);
@@ -536,7 +527,6 @@
                 this.lastTime = now;
 
                 if (this.mode === 'story') {
-                    // (Reload logic omitted for brevity in standalone - simplified)
                     const upgrades = this.currentState.upgradeLevels;
                     const maxAmmo = this.currentState.maxAmmo;
                     let ammo = { ...this.currentState.ammo }; 
@@ -555,7 +545,6 @@
                             b.moveTimer += dt;
                             if (b.moveState === 'strafe') { b.mesh.position.x = Math.sin(now*0.0008)*30; if(b.moveTimer>10) {b.moveState='centering';b.moveTimer=0;} }
                             else if (b.moveState === 'centering') { 
-                                // NEW: FASTER CENTERING (Teleport-like smooth snap)
                                 b.mesh.position.x = THREE.MathUtils.lerp(b.mesh.position.x, 0, dt * 8); 
                                 if(Math.abs(b.mesh.position.x)<0.5 || b.moveTimer>3) {b.moveState='holding';b.moveTimer=0;} 
                             }
@@ -563,20 +552,15 @@
                             
                             b.nextShot -= dt;
                             if (b.nextShot <= 0) {
-                                // NEW: Radial Burst Pattern (5 Bullets)
                                 for(let i=-2; i<=2; i++) {
                                     const bull = new THREE.Mesh(this.geometries.enemyBullet, this.materials.bullet);
                                     bull.position.copy(b.mesh.position); bull.position.y-=4;
-                                    
-                                    // Spread calc: Fan shape
-                                    const angle = i * 0.2; // Radians spread
-                                    const speed = 8; // SLOWER BULLETS
-                                    
-                                    // Direction vector based on angle (Standard down is (0,-1))
+                                    const angle = i * 0.2; 
+                                    const speed = 8;
                                     bull.userData = { velocity: new THREE.Vector3(Math.sin(angle) * speed, -Math.cos(angle) * speed, 0) };
                                     this.scene.add(bull); this.enemyBullets.push(bull);
                                 }
-                                b.nextShot = 1.5; // Fire every 1.5s
+                                b.nextShot = 1.5; 
                             }
                         }
                         b.mesh.children[2].rotation.y += dt;
@@ -605,55 +589,41 @@
                         this.casualSpawnCounter = 0;
                     }
                     
-                    // --- TIME CONTROL MECHANIC (FREEZE ON STOP) ---
                     const timeSinceMove = performance.now() - this.lastMouseTime;
-                    const isMouseMoving = timeSinceMove < 150; // Threshold for "moving"
+                    const isMouseMoving = timeSinceMove < 150; 
                     
                     if (isMouseMoving) {
-                        // ACTIVE: Track and Move
                         const target = this.liveMouse3D.clone(); target.z = 0;
                         this.missiles.forEach(m => {
                             if (m.userData.state === 'launching') return;
-                            m.lookAt(target); // Instant Turn
+                            m.lookAt(target); 
                             const dir = new THREE.Vector3().subVectors(target, m.position).normalize();
                             m.userData.velocity = dir.multiplyScalar(m.userData.speed);
                         });
                     } else {
-                        // IDLE: FREEZE (Stop moving)
                          this.missiles.forEach(m => {
                             if (m.userData.state === 'launching') return;
-                            m.userData.velocity.set(0,0,0); // Stop
+                            m.userData.velocity.set(0,0,0);
                         });
                     }
                 }
 
                 this.mouse3D.lerp(this.liveMouse3D, 0.5);
 
-                // Update Entities
                 for (let i = this.missiles.length - 1; i >= 0; i--) {
                     const m = this.missiles[i];
-                    
-                    // NEW: Missile Interception (Explode on Bullet)
                     let intercepted = false;
                     for (let j = this.enemyBullets.length - 1; j >= 0; j--) {
                         const b = this.enemyBullets[j];
-                        // Collision check
                         if (m.position.distanceTo(b.position) < 3) {
-                            // Create explosion
                             this.createExplosion(m.position, m.userData.type);
-                            
-                            // Remove both
-                            this.scene.remove(m);
-                            this.missiles.splice(i, 1);
-                            
-                            this.scene.remove(b);
-                            this.enemyBullets.splice(j, 1);
-                            
+                            this.scene.remove(m); this.missiles.splice(i, 1);
+                            this.scene.remove(b); this.enemyBullets.splice(j, 1);
                             intercepted = true;
                             break; 
                         }
                     }
-                    if (intercepted) continue; // Missile is gone, skip updates
+                    if (intercepted) continue; 
 
                     if (m.userData.state === 'launching') {
                         m.userData.launchTime += dt;
@@ -675,19 +645,15 @@
                     }
                 }
                 
-                // Bullet Updates
                 for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
                      const b = this.enemyBullets[i];
                      b.position.add(b.userData.velocity.clone().multiplyScalar(dt));
-                     
-                     // NEW: Bounce off walls (Visible Arena Limits +/- 30)
-                     // UPDATED BOUNCE LIMIT: 33 (Barriers are at 35)
+                     // BOUNCE AT 33
                      if (b.position.x > 33 || b.position.x < -33) {
-                         b.userData.velocity.x *= -1; // Reverse X
+                         b.userData.velocity.x *= -1; 
                          b.position.x = b.position.x > 33 ? 33 : -33;
                      }
                      
-                     // Intercept by existing explosions (particles)
                      let intercepted = false;
                      for(const p of this.particles) {
                         if (p.center && p.radius && b.position.distanceTo(p.center) < p.radius) {
@@ -696,7 +662,6 @@
                      }
                      if(intercepted) { this.scene.remove(b); this.enemyBullets.splice(i,1); continue; }
 
-                     // Still remove if it goes way below (hits player essentially)
                      if(b.position.y < -50) { this.scene.remove(b); this.enemyBullets.splice(i,1); continue; }
 
                      if (b.position.y < -35) {
@@ -709,7 +674,6 @@
                      this.enemies[i].position.add(this.enemies[i].userData.velocity);
                      if(this.enemies[i].position.y < -35) { this.damagePlayer(10); this.scene.remove(this.enemies[i]); this.enemies.splice(i,1); }
                 }
-                // Particle Updates
                 for (let i = this.particles.length - 1; i >= 0; i--) {
                     const p = this.particles[i]; p.age++; const t = p.age/p.maxAge;
                     if(p.type==='sphere') {
@@ -750,7 +714,7 @@
                 vec.unproject(this.camera);
                 const dir = vec.sub(this.camera.position).normalize();
                 this.liveMouse3D.copy(this.camera.position.clone().add(dir.multiplyScalar((0-this.camera.position.z)/dir.z)));
-                this.lastMouseTime = performance.now(); // Update time
+                this.lastMouseTime = performance.now(); 
             }
 
             handleClick(weapon) {
@@ -766,7 +730,6 @@
             triggerDebug(key) {
                 if (this.mode !== 'casual') return;
                 if (key === 'p') {
-                     // SPAWN 25 RANDOM MISSILES
                      for(let i=0; i<25; i++) {
                          const type = Math.random() < 0.1 ? 'nuke' : Math.random() < 0.4 ? 'big' : 'normal';
                          this.spawnMissile(type);
@@ -864,73 +827,100 @@
                 setMode('story'); engineRef.current?.startStory(next);
             };
 
+            const buyUpgrade = (type, stat) => {
+                const currentLevel = gameState.upgradeLevels[type][stat];
+                const cost = Math.floor(100 * Math.pow(1.5, currentLevel));
+                if (gameState.money >= cost && currentLevel < 10) {
+                    const newLevels = { ...gameState.upgradeLevels, [type]: { ...gameState.upgradeLevels[type], [stat]: currentLevel + 1 } };
+                    handleStateUpdate({ money: gameState.money - cost, upgradeLevels: newLevels });
+                }
+            };
+
             return (
                 <div className="relative w-full h-screen overflow-hidden font-mono text-gray-800 select-none bg-teal-50">
                     <div ref={containerRef} className="absolute inset-0 z-0" />
                     {mode === 'story' && gameState.bossStatus && (
-                        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 w-3/4 max-w-4xl z-40">
-                            <div className="text-center text-red-500 font-black text-2xl uppercase animate-pulse">{gameState.bossStatus.name}</div>
-                            <div className="h-8 bg-black/60 border-4 border-red-900/80 rounded-full overflow-hidden relative"><div className="h-full bg-red-600" style={{ width: `${(gameState.bossStatus.hp/gameState.bossStatus.maxHp)*100}%` }} /></div>
+                        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 w-3/4 max-w-4xl z-40 pointer-events-none">
+                            <div className="text-center text-red-500 font-black text-2xl uppercase animate-pulse drop-shadow-md">{gameState.bossStatus.name}</div>
+                            <div className="h-8 bg-black/60 border-4 border-red-900/80 rounded-full overflow-hidden relative backdrop-blur"><div className="h-full bg-red-600 transition-all duration-200" style={{ width: `${(gameState.bossStatus.hp/gameState.bossStatus.maxHp)*100}%` }} /></div>
                         </div>
                     )}
                     {mode === 'menu' && (
                         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-teal-50/80 backdrop-blur-sm">
-                            <h1 className="text-8xl font-black text-emerald-600 mb-8 tracking-tighter">MISSILE FUN</h1>
+                            <h1 className="text-8xl font-black text-emerald-600 mb-8 tracking-tighter drop-shadow-sm">MISSILE FUN</h1>
                             <div className="flex flex-col gap-4 w-96">
-                                <button onClick={() => startGame('casual')} className="py-4 text-2xl font-bold border-2 border-emerald-500 bg-white rounded-xl shadow-lg flex justify-center gap-2">FUN MODE</button>
-                                <button onClick={() => setMode('map')} className="py-4 text-2xl font-bold border-2 border-green-600 bg-green-700 text-white rounded-xl shadow-lg flex justify-center gap-2">CAMPAIGN</button>
+                                <button onClick={() => startGame('casual')} className="py-4 text-2xl font-bold border-2 border-emerald-500 bg-white rounded-xl shadow-lg flex justify-center gap-2 hover:scale-105 transition-transform"><Zap className="w-6 h-6"/> FUN MODE</button>
+                                <button onClick={() => setMode('map')} className="py-4 text-2xl font-bold border-2 border-green-600 bg-green-700 text-white rounded-xl shadow-lg flex justify-center gap-2 hover:scale-105 transition-transform"><Shield className="w-6 h-6"/> CAMPAIGN</button>
                             </div>
                         </div>
                     )}
                     {mode === 'gameover' && (
                         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/90 text-white">
                             <h2 className="text-6xl font-black text-red-500 mb-6 animate-pulse">GAME OVER</h2>
-                            <button onClick={() => setMode('menu')} className="px-8 py-3 bg-red-600 rounded font-bold">MENU</button>
+                            <button onClick={() => setMode('menu')} className="px-8 py-3 bg-red-600 rounded font-bold border-2 border-red-400 hover:scale-105 transition-transform">MENU</button>
                         </div>
                     )}
                     {mode === 'map' && (
-                        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-teal-50">
-                            <div ref={scrollRef} onWheel={(e)=>scrollRef.current.scrollLeft+=e.deltaY} className="w-full max-w-7xl overflow-x-auto hide-scroll px-20 py-20 flex gap-12 bg-white/40 border-y border-teal-200" style={{minHeight:'450px'}}>
+                        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-teal-50 text-teal-900">
+                            <h2 className="text-4xl font-bold mb-8 tracking-widest">CAMPAIGN MAP</h2>
+                            <div ref={scrollRef} onWheel={(e)=>scrollRef.current.scrollLeft+=e.deltaY} className="w-full max-w-7xl overflow-x-auto hide-scroll px-20 py-20 flex gap-12 bg-white/40 border-y border-teal-200 backdrop-blur-sm" style={{minHeight:'450px'}}>
                                 {STAGES.map((s,i) => (
-                                    <div key={i} className="flex flex-col items-center shrink-0">
-                                        <button disabled={i+1 > gameState.unlockedStage} onClick={()=>startGame('story',i)} className={`w-20 h-20 border-4 rounded-full font-bold text-xl ${i+1<=gameState.unlockedStage?'bg-white border-teal-500':'bg-gray-200 border-gray-300 text-gray-400'}`}>{s.type==='boss'?'BOSS':i+1}</button>
-                                        {s.sidePath && i+1<=gameState.unlockedStage && s.type==='boss' && <button onClick={()=>startGame('story',i,true)} className="mt-4 w-16 h-16 bg-red-100 border-4 border-red-500 rounded-lg text-xs font-black text-red-800">ELITE</button>}
+                                    <div key={i} className="flex flex-col items-center shrink-0 pt-10 relative">
+                                        <button disabled={i+1 > gameState.unlockedStage} onClick={()=>startGame('story',i)} className={`w-20 h-20 border-4 rounded-full font-bold text-xl transition-transform hover:scale-110 shadow-lg ${i+1<=gameState.unlockedStage?'bg-white border-teal-500 text-teal-900':'bg-gray-200 border-gray-300 text-gray-400'}`}>{s.type==='boss'?'BOSS':i+1}</button>
+                                        {s.sidePath && i+1<=gameState.unlockedStage && s.type==='boss' && <div className="absolute top-full mt-2 flex flex-col items-center"><div className="h-8 w-1 bg-red-500"/><button onClick={()=>startGame('story',i,true)} className="w-16 h-16 bg-red-50 border-4 border-red-500 rounded-lg text-xs font-black text-red-800 hover:scale-110 shadow-lg animate-pulse-glow">ELITE</button></div>}
                                     </div>
                                 ))}
                             </div>
-                            <button onClick={()=>setMode('menu')} className="mt-8 px-6 py-2 bg-teal-700 text-white rounded font-bold">BACK</button>
+                            <button onClick={()=>setMode('menu')} className="mt-8 px-6 py-2 bg-teal-700 text-white rounded font-bold flex items-center gap-2"><ArrowLeft className="w-4 h-4"/> BACK</button>
                         </div>
                     )}
                     {(mode==='story'||mode==='casual') && (
                         <>
-                            <div className="fixed top-4 left-4 z-40"><button onClick={()=>setMode('menu')} className="bg-white px-4 py-2 rounded border shadow font-bold text-red-600">MENU</button></div>
-                            {mode==='story' && <div className="fixed top-4 right-4 z-40 bg-white px-6 py-2 rounded border border-yellow-500 font-bold text-yellow-600 text-2xl">${gameState.money}</div>}
+                            <div className="fixed top-4 left-4 z-40"><button onClick={()=>setMode('menu')} className="bg-white/80 backdrop-blur px-4 py-2 rounded border border-red-200 shadow font-bold text-red-600 flex items-center gap-2 hover:bg-white"><ArrowLeft className="w-4 h-4"/> MENU</button></div>
+                            {mode==='story' && <div className="fixed top-4 right-4 z-40 bg-white/80 backdrop-blur px-6 py-2 rounded border border-yellow-500 font-bold text-yellow-600 text-2xl shadow">${gameState.money}</div>}
                             {mode==='story' && <div className="fixed bottom-6 left-6 flex gap-4 z-40 text-white">
-                                <div className={`p-2 border-2 rounded w-24 text-center ${currentWeapon==='normal'?'scale-110 shadow-lg bg-green-800':'bg-green-900/80'}`}><div className="text-xs">STD</div><div className="font-black text-xl">{gameState.ammo.normal}</div></div>
-                                {gameState.playerClass!=='c' && <div className={`p-2 border-2 rounded w-24 text-center ${currentWeapon==='big'?'scale-110 shadow-lg bg-blue-800':'bg-blue-900/80'}`}><div className="text-xs">BIG</div><div className="font-black text-xl">{gameState.ammo.big}</div></div>}
-                                {gameState.playerClass==='a' && <div className={`p-2 border-2 rounded w-24 text-center ${currentWeapon==='nuke'?'scale-110 shadow-lg bg-emerald-800':'bg-emerald-900/80'}`}><div className="text-xs">NUKE</div><div className="font-black text-xl">{gameState.ammo.nuke}</div></div>}
+                                <div className={`p-2 border-2 rounded w-24 text-center transition-transform ${currentWeapon==='normal'?'scale-110 shadow-lg bg-green-800 border-green-400':'bg-green-900/80 border-green-800'}`}><div className="text-xs font-bold tracking-wider">STD</div><div className="font-black text-xl">{gameState.ammo.normal}</div></div>
+                                {gameState.playerClass!=='c' && <div className={`p-2 border-2 rounded w-24 text-center transition-transform ${currentWeapon==='big'?'scale-110 shadow-lg bg-blue-800 border-blue-400':'bg-blue-900/80 border-blue-800'}`}><div className="text-xs font-bold tracking-wider">BIG</div><div className="font-black text-xl">{gameState.ammo.big}</div></div>}
+                                {gameState.playerClass==='a' && <div className={`p-2 border-2 rounded w-24 text-center transition-transform ${currentWeapon==='nuke'?'scale-110 shadow-lg bg-emerald-800 border-green-400':'bg-emerald-900/80 border-green-800'}`}><div className="text-xs font-bold tracking-wider">NUKE</div><div className="font-black text-xl">{gameState.ammo.nuke}</div></div>}
                             </div>}
-                            {mode==='casual' && <div className="fixed top-4 right-4 z-40 bg-white/80 px-4 py-2 rounded text-xs font-bold text-gray-500">KEYS: P (25 Random), O (100 Nukes), R (Reset)</div>}
+                            {mode==='casual' && <div className="fixed top-4 right-4 z-40 bg-white/80 px-4 py-2 rounded text-xs font-bold text-gray-500 pointer-events-none">KEYS: P (Random), O (Nuke), R (Reset)</div>}
                         </>
                     )}
                     {mode === 'shop' && (
-                        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-green-950/95 text-white">
+                        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-green-950/95 backdrop-blur text-white">
                             <h2 className="text-5xl font-bold text-green-400 mb-8">WAVE COMPLETE</h2>
-                            <div className="w-full max-w-4xl bg-black/40 p-6 rounded-xl mb-8 flex flex-col gap-4">
+                            <div className="w-full max-w-4xl bg-black/40 border border-green-800 p-6 rounded-xl mb-8 flex flex-col gap-4">
                                 <div className="flex justify-between border-b border-green-800 pb-4">
-                                    <div className="flex gap-4"><button onClick={()=>setShopTab('licenses')} className="px-4 py-2 bg-green-600 rounded">LICENSES</button><button onClick={()=>setShopTab('armory')} className="px-4 py-2 bg-green-600 rounded">ARMORY</button></div>
-                                    <div className="text-2xl text-yellow-400 font-bold">${gameState.money}</div>
+                                    <div className="flex gap-4"><button onClick={()=>setShopTab('licenses')} className={`px-4 py-2 rounded font-bold transition-colors ${shopTab==='licenses'?'bg-green-600 text-white':'bg-green-900/50 text-gray-400'}`}>LICENSES</button><button onClick={()=>setShopTab('armory')} className={`px-4 py-2 rounded font-bold transition-colors ${shopTab==='armory'?'bg-green-600 text-white':'bg-green-900/50 text-gray-400'}`}>ARMORY</button></div>
+                                    <div className="text-2xl text-yellow-400 font-bold bg-black/50 px-4 py-1 rounded border border-yellow-500/50">${gameState.money}</div>
                                 </div>
                                 {shopTab==='licenses' && <div className="grid grid-cols-2 gap-4">
-                                    <div className="p-4 bg-blue-900/40 border border-blue-500 rounded text-center"><h3 className="font-bold text-blue-400">Class B ($500)</h3><button disabled={gameState.playerClass!=='c'||gameState.money<500} onClick={()=>handleStateUpdate({playerClass:'b',money:gameState.money-500})} className="mt-2 w-full py-2 bg-blue-600 rounded disabled:opacity-50">BUY</button></div>
-                                    <div className="p-4 bg-green-900/40 border border-green-500 rounded text-center"><h3 className="font-bold text-green-400">Class A ($2000)</h3><button disabled={gameState.playerClass==='a'||gameState.money<2000} onClick={()=>handleStateUpdate({playerClass:'a',money:gameState.money-2000})} className="mt-2 w-full py-2 bg-green-600 rounded disabled:opacity-50">BUY</button></div>
+                                    <div className="p-4 bg-blue-900/40 border border-blue-500 rounded text-center hover:bg-blue-900/60 transition-colors"><h3 className="font-bold text-blue-400 text-xl mb-2">Class B</h3><p className="text-xs text-gray-300 mb-4">Unlocks Heavy Missiles</p><button disabled={gameState.playerClass!=='c'||gameState.money<500} onClick={()=>handleStateUpdate({playerClass:'b',money:gameState.money-500})} className="w-full py-2 bg-blue-600 rounded disabled:opacity-50 disabled:cursor-not-allowed font-bold shadow-lg">BUY $500</button></div>
+                                    <div className="p-4 bg-green-900/40 border border-green-500 rounded text-center hover:bg-green-900/60 transition-colors"><h3 className="font-bold text-green-400 text-xl mb-2">Class A</h3><p className="text-xs text-gray-300 mb-4">Unlocks Nukes</p><button disabled={gameState.playerClass==='a'||gameState.money<2000} onClick={()=>handleStateUpdate({playerClass:'a',money:gameState.money-2000})} className="w-full py-2 bg-green-600 rounded disabled:opacity-50 disabled:cursor-not-allowed font-bold shadow-lg">BUY $2000</button></div>
                                 </div>}
-                                {shopTab==='armory' && <div className="grid grid-cols-2 gap-4 h-64 overflow-y-auto">
-                                    <div className="p-2 bg-orange-900/20 border border-orange-500 flex justify-between items-center"><span>Big Ammo x5</span><button disabled={gameState.money<200} onClick={()=>handleStateUpdate({ammo:{...gameState.ammo,big:gameState.ammo.big+5},money:gameState.money-200})} className="px-2 py-1 bg-orange-600 rounded">$200</button></div>
-                                    <div className="p-2 bg-yellow-900/20 border border-yellow-500 flex justify-between items-center"><span>Nuke x1</span><button disabled={gameState.money<500} onClick={()=>handleStateUpdate({ammo:{...gameState.ammo,nuke:gameState.ammo.nuke+1},money:gameState.money-500})} className="px-2 py-1 bg-yellow-600 rounded">$500</button></div>
+                                {shopTab==='armory' && <div className="grid grid-cols-1 gap-2 h-64 overflow-y-auto custom-scroll pr-2">
+                                    <div className="flex gap-2 mb-2">
+                                        <div className="p-3 bg-orange-900/20 border border-orange-500/50 rounded flex-1 flex justify-between items-center"><div><div className="font-bold text-orange-400">Big Ammo x5</div></div><button disabled={gameState.money<200} onClick={()=>handleStateUpdate({ammo:{...gameState.ammo,big:gameState.ammo.big+5},money:gameState.money-200})} className="px-3 py-1 bg-orange-600 rounded font-bold hover:bg-orange-500 disabled:opacity-50">$200</button></div>
+                                        <div className="p-3 bg-yellow-900/20 border border-yellow-500/50 rounded flex-1 flex justify-between items-center"><div><div className="font-bold text-yellow-400">Nuke x1</div></div><button disabled={gameState.money<500} onClick={()=>handleStateUpdate({ammo:{...gameState.ammo,nuke:gameState.ammo.nuke+1},money:gameState.money-500})} className="px-3 py-1 bg-yellow-600 rounded font-bold hover:bg-yellow-500 disabled:opacity-50">$500</button></div>
+                                    </div>
+                                    <div className="grid grid-cols-4 gap-2 text-xs font-bold text-gray-500 uppercase tracking-wider mb-1"><div className="pl-2">Stat</div><div className="text-center text-green-400">Std</div><div className="text-center text-blue-400">Big</div><div className="text-center text-yellow-400">Nuke</div></div>
+                                    {['dmg', 'radius', 'reload', 'speed'].map(stat => (
+                                        <div key={stat} className="grid grid-cols-4 gap-2 bg-white/5 p-2 rounded items-center">
+                                            <div className="font-bold capitalize pl-2">{stat}</div>
+                                            {['normal', 'big', 'nuke'].map(type => {
+                                                const lvl = gameState.upgradeLevels[type][stat];
+                                                const cost = Math.floor(100 * Math.pow(1.5, lvl));
+                                                return (
+                                                    <button key={type} disabled={gameState.money<cost || lvl>=10} onClick={()=>buyUpgrade(type, stat)} className={`text-xs py-1 rounded border ${type==='normal'?'border-green-800 bg-green-900/30':type==='big'?'border-blue-800 bg-blue-900/30':'border-yellow-800 bg-yellow-900/30'} hover:bg-white/10 disabled:opacity-30`}>
+                                                        <div className="text-white">Lvl {lvl}</div><div className="text-yellow-500">${cost}</div>
+                                                    </button>
+                                                )
+                                            })}
+                                        </div>
+                                    ))}
                                 </div>}
                             </div>
-                            <button onClick={nextWave} className="px-12 py-4 bg-green-500 text-black font-black text-2xl rounded-full hover:scale-105">NEXT WAVE</button>
+                            <button onClick={nextWave} className="px-12 py-4 bg-green-500 hover:bg-green-400 text-black font-black text-2xl rounded-full hover:scale-105 transition-transform shadow-[0_0_30px_rgba(74,222,128,0.4)]">NEXT WAVE</button>
                         </div>
                     )}
                 </div>
