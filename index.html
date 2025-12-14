@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Missile Fun - Standalone</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f0fdfa; user-select: none; }
+        .hide-scroll::-webkit-scrollbar { display: none; }
+        .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+        .custom-scroll::-webkit-scrollbar { width: 8px; }
+        .custom-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); border-radius: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #15803d; border-radius: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: #22c55e; }
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 10px #ef4444; }
+            50% { box-shadow: 0 0 25px #ef4444; }
+        }
+        .animate-pulse-glow { animation: pulse-glow 2s infinite; }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.263.1",
+        "three": "https://esm.sh/three@0.160.0"
+      }
+    }
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module">
+        import React, { useState, useEffect, useRef, useCallback } from 'react';
+        import ReactDOM from 'react-dom/client';
+        import * as THREE from 'three';
+        import { Shield, Zap, ArrowLeft, RotateCcw, Trash2, Swords, Wallet, Move, Rocket, Crosshair } from 'lucide-react';
+
+        // --- CONSTANTS & TYPES ---
+        const SAVE_KEY = 'missile_fun_standalone_v1';
+
+        const STAGES = [
+            { type: 'wave', count: 15, freq: 80, difficulty: 0 },
+            { type: 'wave', count: 25, freq: 60, difficulty: 0 },
+            { type: 'wave', count: 35, freq: 50, difficulty: 1 },
+            { type: 'wave', count: 45, freq: 40, difficulty: 1 },
+            { type: 'boss', hp: 500, sidePath: { type: 'boss', hp: 1500, difficulty: 3, isSide: true } },
+            { type: 'wave', count: 60, freq: 35, difficulty: 1 },
+            { type: 'wave', count: 80, freq: 30, difficulty: 2 },
+            { type: 'wave', count: 100, freq: 25, difficulty: 2 },
+            { type: 'wave', count: 120, freq: 20, difficulty: 2 },
+            { type: 'boss', hp: 3000, sidePath: { type: 'boss', hp: 8000, difficulty: 3, isSide: true } },
+            { type: 'wave', count: 150, freq: 15, difficulty: 3 },
+            { type: 'wave', count: 200, freq: 10, difficulty: 3 },
+            { type: 'wave', count: 250, freq: 8, difficulty: 3 },
+            { type: 'wave', count: 300, freq: 5, difficulty: 3 },
+            { type: 'boss', hp: 20000 }
+        ];
+
+        const INITIAL_STATE = {
+            money: 0,
+            health: 100,
+            wave: 1,
+            unlockedStage: 1,
+            completedSidePaths: [],
+            playerClass: 'c',
+            ammo: { normal: 5, big: 0, nuke: 0 },
+            maxAmmo: { normal: 50, big: 30, nuke: 5 },
+            upgradeLevels: {
+                moneyMult: 0,
+                normal: { dmg: 0, radius: 0, reload: 0, speed: 0, crit: 0 },
+                big: { dmg: 0, radius: 0, reload: 0, speed: 0, crit: 0 },
+                nuke: { dmg: 0, radius: 0, reload: 0, speed: 0, crit: 0 }
+            },
+            reloadProgress: { normal: 1, big: 1, nuke: 1 },
+            reloadTimeLeft: { normal: 0, big: 0, nuke: 0 },
+            stats: { speedMult: 1.0, radiusMult: 1.0 },
+            bossStatus: null
+        };
+
+        // --- GAME ENGINE ---
+        class GameEngine {
+            constructor(container, updateCallback, gameOverCallback, waveCompleteCallback, initialState) {
+                this.container = container;
+                this.onStateUpdate = updateCallback;
+                this.onGameOver = gameOverCallback;
+                this.onWaveComplete = waveCompleteCallback;
+                this.currentState = JSON.parse(JSON.stringify(initialState));
+
+                this.missiles = [];
+                this.enemies = [];
+                this.enemyBullets = [];
+                this.particles = [];
+                this.materials = {};
+                this.geometries = {};
+                
+                this.mode = 'menu';
+                this.isRunning = false;
+                this.isPaused = false;
+                this.mouse3D = new THREE.Vector3();
+                this.liveMouse3D = new THREE.Vector3();
+                this.lastMouseTime = 0; 
+                
+                this.bossActive = null;
+                this.enemiesToSpawn = 0;
+                this.spawnTimer = 0;
+                this.regenCounters = { normal: 0, big: 0, nuke: 0 };
+                
+                // Casual Mode
+                this.casualSpawnCounter = 0;
+                this.casualSpawnFreq = 60;
+                this.particleCount = 600; 
+
+                // Three Init
+                this.scene = new THREE.Scene();
+                this.scene.fog = new THREE.FogExp2(0x000000, 0.005);
+                this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.camera.position.set(0, 0, 50);
+                
+                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+                this.renderer.toneMappingExposure = 1.2;
+                container.appendChild(this.renderer.domElement);
+
+                // Lights
+                this.scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+                const dir = new THREE.DirectionalLight(0xffffff, 1.5);
+                dir.position.set(10, 20, 20);
+                this.scene.add(dir);
+                const rim = new THREE.SpotLight(0x4ade80, 5);
+                rim.position.set(-20, 10, 10);
+                rim.lookAt(0,0,0);
+                this.scene.add(rim);
+
+                this.initAssets();
+                this.createBarriers();
+                
+                this.onResize = this.onResize.bind(this);
+                this.onMouseMove = this.onMouseMove.bind(this);
+                this.animate = this.animate.bind(this);
+
+                window.addEventListener('resize', this.onResize);
+                window.addEventListener('mousemove', this.onMouseMove);
+                
+                this.lastTime = performance.now();
+                this.animate();
+            }
+
+            initAssets() {
+                const canvas = document.createElement('canvas');
+                canvas.width = 64; canvas.height = 64;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    const gr = ctx.createRadialGradient(32,32,0,32,32,32);
+                    gr.addColorStop(0, 'rgba(255,255,255,1)');
+                    gr.addColorStop(1, 'rgba(255,255,255,0)');
+                    ctx.fillStyle = gr;
+                    ctx.fillRect(0,0,64,64);
+                }
+                this.particleTexture = new THREE.CanvasTexture(canvas);
+
+                const geoms = this.geometries;
+                // NEW NUKE MODEL: GBU-57 Improved
+                geoms.nukeMain = new THREE.CylinderGeometry(1.0, 1.0, 7.5, 16); 
+                geoms.nukeNose = new THREE.ConeGeometry(1.0, 2.0, 16); // Nose cone
+                geoms.nukeFin = new THREE.BoxGeometry(0.1, 1.8, 1.0); // Grid fin paddle
+                geoms.nukeTail = new THREE.CylinderGeometry(0.8, 1.0, 1.0, 16); // Tail taper
+
+                geoms.bigBody = new THREE.CylinderGeometry(0.6, 0.6, 3.5, 12);
+                geoms.bigNose = new THREE.SphereGeometry(0.6, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+                geoms.smallBody = new THREE.CylinderGeometry(0.2, 0.2, 3.0, 8);
+                geoms.smallHead = new THREE.SphereGeometry(0.2, 8, 8, 0, Math.PI*2, 0, Math.PI/2);
+                
+                // Enemy/Boss Geoms
+                geoms.bossMain = new THREE.CylinderGeometry(4, 3, 8, 6);
+                geoms.bossWing = new THREE.BoxGeometry(12, 2, 4);
+                geoms.bossCore = new THREE.IcosahedronGeometry(2, 2);
+                geoms.bossCannon = new THREE.CylinderGeometry(0.5, 0.5, 4);
+                geoms.enemyBullet = new THREE.SphereGeometry(0.6, 8, 8);
+                geoms.barrierPole = new THREE.CylinderGeometry(0.2, 0.2, 100, 8);
+                geoms.hpBg = new THREE.PlaneGeometry(3, 0.4);
+                geoms.hpFg = new THREE.PlaneGeometry(2.9, 0.3);
+                geoms.hpFg.translate(1.45, 0, 0);
+
+                // Enemy Types
+                geoms.scoutRing = new THREE.TorusGeometry(1.2, 0.2, 8, 16); 
+                geoms.scoutEye = new THREE.SphereGeometry(0.6, 16, 16);
+                geoms.fighterBody = new THREE.ConeGeometry(0.8, 3.5, 4);
+                geoms.fighterWing = new THREE.ConeGeometry(0.4, 2.5, 4); 
+                geoms.dreadMain = new THREE.BoxGeometry(2.5, 4, 1.5);
+                geoms.dreadSide = new THREE.BoxGeometry(1, 3, 1.5);
+                geoms.dreadTurret = new THREE.CylinderGeometry(0.4, 0.4, 1, 8);
+                geoms.droneCore = new THREE.IcosahedronGeometry(0.7, 0);
+                geoms.droneSpike = new THREE.ConeGeometry(0.2, 1.2, 8);
+                
+                const mats = this.materials;
+                // NUKE MAT: Dark Grey
+                mats.nukeBody = new THREE.MeshStandardMaterial({ color: 0x445566, roughness: 0.4, metalness: 0.5 }); 
+                mats.nukeFins = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 });
+                
+                mats.bigBody = new THREE.MeshStandardMaterial({ color: 0xe5e7eb, roughness: 0.3 });
+                mats.bigGlass = new THREE.MeshStandardMaterial({ color: 0x3b82f6, roughness: 0.1, emissive: 0x1d4ed8, emissiveIntensity: 0.5 });
+                mats.stdBody = new THREE.MeshStandardMaterial({ color: 0xf3f4f6, roughness: 0.5 });
+                mats.stdDark = new THREE.MeshStandardMaterial({ color: 0x4b5563, side: THREE.DoubleSide });
+                mats.enemyBlack = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4 });
+                mats.enemyGrey = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.3 });
+                mats.enemyRedGlow = new THREE.MeshStandardMaterial({ color: 0xff0000, emissive: 0xaa0000, emissiveIntensity: 2.5 });
+                mats.enemyGreenGlow = new THREE.MeshStandardMaterial({ color: 0x00ff00, emissive: 0x004400, emissiveIntensity: 2 });
+                mats.bossHull = new THREE.MeshStandardMaterial({ color: 0x2d3748, roughness: 0.2, metalness: 0.8 });
+                mats.bossCore = new THREE.MeshStandardMaterial({ color: 0xff0000, emissive: 0xff0000, emissiveIntensity: 4 });
+                mats.barrierGlow = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.3 });
+                mats.bullet = new THREE.MeshBasicMaterial({ color: 0xff4400 });
+                mats.hpBg = new THREE.MeshBasicMaterial({ color: 0x000000 });
+                mats.hpFg = new THREE.MeshBasicMaterial({ color: 0x39ff14 });
+            }
+
+            createBarriers() {
+                if (this.barriers) return;
+                this.barriers = new THREE.Group();
+                const left = new THREE.Mesh(this.geometries.barrierPole, this.materials.barrierGlow);
+                left.position.set(-48, 0, 0);
+                const right = new THREE.Mesh(this.geometries.barrierPole, this.materials.barrierGlow);
+                right.position.set(48, 0, 0);
+                this.barriers.add(left, right);
+                this.scene.add(this.barriers);
+            }
+
+            createStoryBackground() {
+                if (this.starfield) {
+                    this.scene.remove(this.starfield);
+                    this.starfield.geometry.dispose();
+                    this.starfield = null;
+                }
+                const count = 1500;
+                const positions = new Float32Array(count * 3);
+                for(let i=0; i<count; i++) {
+                    positions[i*3] = (Math.random() - 0.5) * 200;
+                    positions[i*3+1] = (Math.random() - 0.5) * 200;
+                    positions[i*3+2] = -50 + (Math.random() * 50);
+                }
+                const geo = new THREE.BufferGeometry();
+                geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                const mat = new THREE.PointsMaterial({ color: 0xaaaaaa, size: 0.5, transparent: true, opacity: 0.6 });
+                this.starfield = new THREE.Points(geo, mat);
+                this.scene.add(this.starfield);
+            }
+
+            startStory(levelIndex, isSidePath = false) {
+                this.cleanupEntities();
+                this.mode = 'story';
+                this.isRunning = true;
+                this.isPaused = false;
+                if (this.barriers) this.barriers.visible = true;
+                if (this.particlesMesh) { this.scene.remove(this.particlesMesh); this.particlesMesh = null; }
+                this.createStoryBackground();
+
+                let stage = STAGES[levelIndex];
+                if (isSidePath && stage.sidePath) stage = stage.sidePath;
+                this.currentStageConfig = stage;
+
+                if (stage.type === 'wave') {
+                    this.enemiesToSpawn = stage.count || 5;
+                    this.bossActive = null;
+                } else {
+                    this.enemiesToSpawn = 0;
+                    this.spawnBoss(stage.hp || 500);
+                }
+            }
+
+            startCasual() {
+                this.cleanupEntities();
+                this.mode = 'casual';
+                this.isRunning = true;
+                this.isPaused = false;
+                if (this.barriers) this.barriers.visible = true;
+                if (this.starfield) { this.scene.remove(this.starfield); this.starfield = null; }
+                this.onStateUpdate({ health: 100 });
+                this.currentState.health = 100;
+                this.casualSpawnCounter = 0;
+                this.createParticleWeb();
+            }
+
+            createParticleWeb() {
+                const positions = new Float32Array(this.particleCount * 3);
+                const geo = new THREE.BufferGeometry();
+                for (let i = 0; i < this.particleCount; i++) {
+                    positions[i * 3] = (Math.random() - 0.5) * 90;
+                    positions[i * 3 + 1] = (Math.random() - 0.5) * 60;
+                    positions[i * 3 + 2] = -5 + (Math.random() - 0.5) * 10;
+                }
+                geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                const mat = new THREE.PointsMaterial({
+                    color: 0x047857, size: 0.6, transparent: true, opacity: 0.6, 
+                    map: this.particleTexture, blending: THREE.AdditiveBlending, depthWrite: false
+                });
+                this.particlesMesh = new THREE.Points(geo, mat);
+                this.scene.add(this.particlesMesh);
+                this.particlesMesh.geometry.userData.velocities = [];
+                for (let i = 0; i < this.particleCount; i++) {
+                     this.particlesMesh.geometry.userData.velocities.push(
+                         new THREE.Vector3((Math.random() - 0.5) * 0.1, (Math.random() - 0.5) * 0.1, 0)
+                     );
+                }
+            }
+
+            spawnBoss(hp) {
+                const g = new THREE.Group();
+                const hull = new THREE.Mesh(this.geometries.bossMain, this.materials.bossHull);
+                hull.rotation.x = Math.PI / 2;
+                const wings = new THREE.Mesh(this.geometries.bossWing, this.materials.bossHull);
+                const core = new THREE.Mesh(this.geometries.bossCore, this.materials.bossCore);
+                const c1 = new THREE.Mesh(this.geometries.bossCannon, this.materials.enemyGrey);
+                c1.position.set(-3, -2, 2); c1.rotation.x = Math.PI/2;
+                const c2 = new THREE.Mesh(this.geometries.bossCannon, this.materials.enemyGrey);
+                c2.position.set(3, -2, 2); c2.rotation.x = Math.PI/2;
+                g.add(new THREE.PointLight(0xff0000, 1.5, 30));
+                g.add(hull, wings, core, c1, c2);
+                g.position.set(0, 40, 0); 
+                this.scene.add(g);
+                this.bossActive = { mesh: g, hp, maxHp: hp, state: 'entering', nextShot: 2.0, moveState: 'strafe', moveTimer: 0 };
+                this.onStateUpdate({ bossStatus: { name: 'VOID MOTHERSHIP', hp, maxHp: hp } });
+            }
+
+            spawnEnemy() {
+                const difficulty = this.currentStageConfig?.difficulty || 0;
+                const currentWave = this.currentState.wave;
+                let type = 'scout';
+                if (currentWave > 1 && Math.random() > 0.7) type = 'drone';
+                if (difficulty >= 1 && Math.random() > 0.6) type = 'fighter';
+                if (difficulty >= 2 && Math.random() > 0.8) type = 'dread';
+
+                const g = new THREE.Group();
+                let hp, speed, dmg;
+                let hpMult = 1.0; let speedMult = 1.0;
+                if (currentWave > 5) { hpMult = 1 + ((currentWave - 5) * 0.25); speedMult = 1 + ((currentWave - 5) * 0.03); }
+                
+                const matBlack = this.materials.enemyBlack.clone();
+                const matGrey = this.materials.enemyGrey.clone();
+                const matRed = this.materials.enemyRedGlow.clone();
+
+                if (type === 'dread') {
+                    const main = new THREE.Mesh(this.geometries.dreadMain, matBlack);
+                    const sideL = new THREE.Mesh(this.geometries.dreadSide, matGrey); sideL.position.x = -1.8;
+                    const sideR = new THREE.Mesh(this.geometries.dreadSide, matGrey); sideR.position.x = 1.8;
+                    const turret = new THREE.Mesh(this.geometries.dreadTurret, matRed); turret.position.y = 1; turret.rotation.x = Math.PI/2;
+                    g.add(main, sideL, sideR, turret);
+                    hp = 30 * hpMult; speed = 0.05 * speedMult; dmg = 10;
+                } else if (type === 'fighter') {
+                    const body = new THREE.Mesh(this.geometries.fighterBody, matBlack); body.rotation.x = Math.PI; 
+                    const wingL = new THREE.Mesh(this.geometries.fighterWing, matRed); wingL.position.set(-0.8, 0, 0); wingL.rotation.z = 0.5; wingL.rotation.x = Math.PI;
+                    const wingR = new THREE.Mesh(this.geometries.fighterWing, matRed); wingR.position.set(0.8, 0, 0); wingR.rotation.z = -0.5; wingR.rotation.x = Math.PI;
+                    g.add(body, wingL, wingR);
+                    hp = 5 * hpMult; speed = 0.25 * speedMult; dmg = 5;
+                } else if (type === 'drone') {
+                    g.add(new THREE.Mesh(this.geometries.droneCore, matBlack));
+                    [[0,1,0], [0,-1,0], [1,0,0], [-1,0,0], [0,0,1], [0,0,-1]].forEach(p => {
+                        const s = new THREE.Mesh(this.geometries.droneSpike, this.materials.enemyGreenGlow);
+                        s.position.set(p[0]*0.6, p[1]*0.6, p[2]*0.6); s.lookAt(new THREE.Vector3(p[0]*2, p[1]*2, p[2]*2)); s.rotation.x += Math.PI/2;
+                        g.add(s);
+                    });
+                    hp = 2 * hpMult; speed = 0.35 * speedMult; dmg = 2;
+                } else {
+                    const ring = new THREE.Mesh(this.geometries.scoutRing, matGrey); ring.rotation.x = Math.PI/2;
+                    const eye = new THREE.Mesh(this.geometries.scoutEye, matRed);
+                    g.add(ring, eye); g.userData.rotates = true;
+                    hp = 3.5 * hpMult; speed = 0.15 * speedMult; dmg = 1;
+                }
+                
+                g.position.set((Math.random()-0.5)*42, 45, 0); 
+                const hpGroup = new THREE.Group(); hpGroup.position.set(0, 3.5, 0); 
+                const fg = new THREE.Mesh(this.geometries.hpFg, this.materials.hpFg); fg.position.z = 0.05; fg.position.x = -1.45;
+                hpGroup.add(new THREE.Mesh(this.geometries.hpBg, this.materials.hpBg), fg);
+                g.add(hpGroup);
+                
+                g.userData = { ...g.userData, velocity: new THREE.Vector3(0, -speed, 0), hp, maxHp: hp, dmg, hpBar: fg };
+                this.scene.add(g); this.enemies.push(g);
+            }
+
+            createMissileGroup(type) {
+                const g = new THREE.Group();
+                if (type === 'nuke') {
+                    // GBU-57 Style - Improved
+                    const body = new THREE.Mesh(this.geometries.nukeMain, this.materials.nukeBody); 
+                    body.rotation.x = Math.PI/2;
+                    const nose = new THREE.Mesh(this.geometries.nukeNose, this.materials.nukeBody);
+                    nose.position.y = 4.75; // Top of cylinder
+                    body.add(nose);
+                    
+                    const tail = new THREE.Mesh(this.geometries.nukeTail, this.materials.nukeBody);
+                    tail.position.y = -4.25;
+                    body.add(tail);
+
+                    // Grid Fins (Paddle style)
+                    for(let i=0; i<4; i++) {
+                        const fin = new THREE.Mesh(this.geometries.nukeFin, this.materials.nukeFins);
+                        fin.position.set(0, -4.5, 0);
+                        fin.rotation.y = (Math.PI/2) * i;
+                        fin.translateZ(1.2);
+                        body.add(fin);
+                    }
+                    g.add(body);
+                } else if (type === 'big') {
+                    const body = new THREE.Mesh(this.geometries.bigBody, this.materials.bigBody); body.rotation.x = Math.PI/2;
+                    const nose = new THREE.Mesh(this.geometries.bigNose, this.materials.bigGlass); nose.position.z = 1.75; nose.rotation.x = Math.PI/2;
+                    g.add(body, nose);
+                } else {
+                    const body = new THREE.Mesh(this.geometries.smallBody, this.materials.stdBody); body.rotation.x = Math.PI/2;
+                    const head = new THREE.Mesh(this.geometries.smallHead, this.materials.stdBody); head.position.z = 1.5; 
+                    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.5), this.materials.stdDark); fin.position.set(0,0.2,-1.3);
+                    g.add(body, head, fin);
+                }
+                return g;
+            }
+
+            spawnMissile(type) {
+                const activeCount = this.missiles.filter(m => m.userData.type === type).length;
+                if (this.mode !== 'casual' && ((type === 'nuke' && activeCount >= 1) || (type === 'big' && activeCount >= 5))) return 'LIMIT';
+
+                const startPos = new THREE.Vector3(0, -45, 0);
+                if (this.mode === 'casual') {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 70 + Math.random() * 20;
+                    startPos.set(Math.cos(angle) * dist, Math.sin(angle) * dist, 0);
+                }
+
+                const target = this.liveMouse3D.clone(); target.z = 0;
+                const stats = type === 'big' ? this.currentState.upgradeLevels.big : type === 'nuke' ? this.currentState.upgradeLevels.nuke : this.currentState.upgradeLevels.normal;
+                let finalSpeed = (type === 'big' ? 0.6 : type === 'nuke' ? 0.4 : 0.8) + (stats.speed||0)*0.05;
+                if (this.mode === 'casual') finalSpeed *= 0.8;
+
+                const mesh = this.createMissileGroup(type);
+                if (type === 'nuke' && this.mode === 'story') {
+                     mesh.position.set(0, -60, 0); mesh.rotation.x = -Math.PI/2;
+                     mesh.userData = { type, state: 'launching', launchTime: 0, targetPos: target, finalSpeed };
+                } else {
+                     const dir = new THREE.Vector3().subVectors(target, startPos).normalize();
+                     mesh.position.copy(startPos);
+                     mesh.lookAt(startPos.clone().add(dir));
+                     mesh.userData = { type, velocity: dir.multiplyScalar(finalSpeed), speed: finalSpeed };
+                }
+                this.scene.add(mesh); this.missiles.push(mesh);
+                return true;
+            }
+
+            createExplosion(pos, type) {
+                if (type === 'nuke') { this.createNukeExplosion(pos); return; }
+                const radLevel = (type === 'big' ? this.currentState.upgradeLevels.big.radius : this.currentState.upgradeLevels.normal.radius) || 0;
+                const effectiveRad = (type === 'big' ? 18 : 6) + radLevel * (type === 'big' ? 3 : 1.5);
+                const count = 500 + radLevel * 100;
+                const positions = new Float32Array(count * 3);
+                const colors = [];
+                const palette = type === 'big' ? [0x2563eb, 0x60a5fa] : [0xf97316, 0xff8800];
+                for(let i=0; i<count; i++) {
+                    positions[i*3] = pos.x + (Math.random()-0.5); positions[i*3+1] = pos.y + (Math.random()-0.5); positions[i*3+2] = pos.z + (Math.random()-0.5);
+                    const col = new THREE.Color(palette[Math.floor(Math.random()*palette.length)]); colors.push(col.r, col.g, col.b);
+                }
+                const geo = new THREE.BufferGeometry();
+                geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                const mat = new THREE.PointsMaterial({ size: 1.0 + radLevel * 0.1, vertexColors: true, map: this.particleTexture, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
+                const points = new THREE.Points(geo, mat);
+                points.userData.velocities = Array(count).fill(0).map(() => new THREE.Vector3().randomDirection().multiplyScalar(effectiveRad * 0.05));
+                this.scene.add(points);
+                this.particles.push({ points, age: 0, maxAge: 60, type: 'expl', center: pos.clone(), radius: effectiveRad });
+                
+                const dmgLevel = (type === 'big' ? this.currentState.upgradeLevels.big.dmg : this.currentState.upgradeLevels.normal.dmg) || 0;
+                let dmg = (type === 'big' ? 12 : 2) + dmgLevel * (type === 'big' ? 3 : 1);
+                this.checkDamage(pos, effectiveRad, dmg);
+            }
+
+            createNukeExplosion(pos) {
+                const effectiveRad = 60 + (this.currentState.upgradeLevels.nuke.radius||0) * 10;
+                let count = 5000;
+                const geo = new THREE.BufferGeometry();
+                const positions = new Float32Array(count * 3);
+                const velocities = [];
+                const colors = [];
+                // GREEN PALETTE
+                const palette = [0x00ff00, 0x33ff33, 0x008800, 0xccffcc]; 
+                for(let i=0; i<count; i++) {
+                    positions[i*3] = pos.x; positions[i*3+1] = pos.y; positions[i*3+2] = pos.z;
+                    velocities.push(new THREE.Vector3().randomDirection().multiplyScalar(effectiveRad * 0.03));
+                    const col = new THREE.Color(palette[Math.floor(Math.random()*palette.length)]); colors.push(col.r, col.g, col.b);
+                }
+                geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                const mat = new THREE.PointsMaterial({ size: 3.0, vertexColors: true, map: this.particleTexture, blending: THREE.AdditiveBlending, transparent: true });
+                const points = new THREE.Points(geo, mat);
+                this.scene.add(points);
+                this.particles.push({ points, age: 0, maxAge: 120, type: 'sphere', velocities, center: pos.clone(), radius: effectiveRad });
+
+                // GREEN FIREBALL
+                const fireball = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 32), new THREE.MeshBasicMaterial({ color: 0xaaffaa, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending }));
+                fireball.position.copy(pos);
+                this.scene.add(fireball);
+                this.particles.push({ type: 'fireball', mesh: fireball, age: 0, maxAge: 80, maxRadius: effectiveRad * 0.8 });
+                this.checkDamage(pos, effectiveRad, 100 + (this.currentState.upgradeLevels.nuke.dmg||0)*20);
+            }
+
+            checkDamage(pos, radius, damage) {
+                if (this.mode !== 'story') return; 
+                for (let i = this.enemies.length - 1; i >= 0; i--) {
+                    const e = this.enemies[i];
+                    if (e.position.distanceTo(pos) < radius) {
+                        e.userData.hp -= damage;
+                        if (e.userData.hpBar) e.userData.hpBar.scale.set(Math.max(0, e.userData.hp / e.userData.maxHp), 1, 1);
+                        if (e.userData.hp <= 0) { this.scene.remove(e); this.enemies.splice(i, 1); this.onStateUpdate({ money: this.currentState.money + 15 }); }
+                    }
+                }
+                if (this.bossActive && this.bossActive.mesh.position.distanceTo(pos) < radius + 10) {
+                    this.bossActive.hp -= damage;
+                    this.onStateUpdate({ bossStatus: { name: 'VOID MOTHERSHIP', hp: Math.max(0, this.bossActive.hp), maxHp: this.bossActive.maxHp } });
+                    if(this.bossActive.hp<=0) {
+                         this.scene.remove(this.bossActive.mesh); this.bossActive = null;
+                         this.enemyBullets.forEach(b => this.scene.remove(b)); this.enemyBullets = [];
+                         this.onStateUpdate({ money: this.currentState.money + 1000, bossStatus: null }); 
+                         this.onWaveComplete();
+                    }
+                }
+            }
+
+            update() {
+                if (!this.isRunning || this.isPaused) return;
+                const now = performance.now();
+                const dt = Math.min((now - this.lastTime) / 1000, 0.1);
+                this.lastTime = now;
+
+                if (this.mode === 'story') {
+                    // (Reload logic omitted for brevity in standalone - simplified)
+                    const upgrades = this.currentState.upgradeLevels;
+                    const maxAmmo = this.currentState.maxAmmo;
+                    let ammo = { ...this.currentState.ammo }; 
+                    let updatedAmmo = false;
+                    const nDur = Math.max(0.1, 1.0 - (upgrades.normal.reload||0)*0.08); 
+                    if (ammo.normal < maxAmmo.normal) {
+                        this.regenCounters.normal += dt;
+                        if (this.regenCounters.normal >= nDur) { ammo.normal++; this.regenCounters.normal = 0; updatedAmmo = true; }
+                    }
+                    if (updatedAmmo) this.onStateUpdate({ ammo });
+                    
+                    if (this.bossActive) { // Boss Logic
+                        const b = this.bossActive;
+                        if (b.state === 'entering') { b.mesh.position.y -= 10 * dt; if (b.mesh.position.y <= 12) b.state = 'fighting'; }
+                        else {
+                            b.moveTimer += dt;
+                            if (b.moveState === 'strafe') { b.mesh.position.x = Math.sin(now*0.0008)*30; if(b.moveTimer>10) {b.moveState='centering';b.moveTimer=0;} }
+                            else if (b.moveState === 'centering') { 
+                                // NEW: FASTER CENTERING (Teleport-like smooth snap)
+                                b.mesh.position.x = THREE.MathUtils.lerp(b.mesh.position.x, 0, dt * 8); 
+                                if(Math.abs(b.mesh.position.x)<0.5 || b.moveTimer>3) {b.moveState='holding';b.moveTimer=0;} 
+                            }
+                            else { b.mesh.position.x = 0; if(b.moveTimer>4) {b.moveState='strafe';b.moveTimer=0;} }
+                            b.nextShot -= dt;
+                            if (b.nextShot <= 0) {
+                                for(let i=-1; i<=1; i++) {
+                                    const bull = new THREE.Mesh(this.geometries.enemyBullet, this.materials.bullet);
+                                    bull.position.copy(b.mesh.position); bull.position.y-=4; bull.position.x+=i*3;
+                                    bull.userData = { velocity: new THREE.Vector3(i*5, -15, 0) };
+                                    this.scene.add(bull); this.enemyBullets.push(bull);
+                                }
+                                b.nextShot = 2.0;
+                            }
+                        }
+                    }
+                    if (!this.bossActive && this.enemiesToSpawn > 0) {
+                        this.spawnTimer++;
+                        if (this.spawnTimer > (this.currentStageConfig?.freq || 100)) { this.spawnEnemy(); this.enemiesToSpawn--; this.spawnTimer = 0; }
+                    } else if (!this.bossActive && this.enemiesToSpawn === 0 && this.enemies.length === 0) {
+                        this.onWaveComplete();
+                    }
+                } else if (this.mode === 'casual') {
+                    if(this.particlesMesh) {
+                        const pos = this.particlesMesh.geometry.attributes.position.array;
+                        const v = this.particlesMesh.geometry.userData.velocities;
+                        for(let i=0; i<this.particleCount; i++) {
+                            pos[i*3]+=v[i].x; pos[i*3+1]+=v[i].y;
+                            if(pos[i*3]>50) pos[i*3]=-50; if(pos[i*3]<-50) pos[i*3]=50;
+                            if(pos[i*3+1]>35) pos[i*3+1]=-35; if(pos[i*3+1]<-35) pos[i*3+1]=35;
+                        }
+                        this.particlesMesh.geometry.attributes.position.needsUpdate = true;
+                    }
+                    this.casualSpawnCounter += dt;
+                    if (this.casualSpawnCounter > 1.0) {
+                        const type = Math.random() < 0.1 ? 'nuke' : Math.random() < 0.4 ? 'big' : 'normal';
+                        this.spawnMissile(type);
+                        this.casualSpawnCounter = 0;
+                    }
+                    
+                    // --- TIME CONTROL MECHANIC (FREEZE ON STOP) ---
+                    const timeSinceMove = performance.now() - this.lastMouseTime;
+                    const isMouseMoving = timeSinceMove < 150; // Threshold for "moving"
+                    
+                    if (isMouseMoving) {
+                        // ACTIVE: Track and Move
+                        const target = this.liveMouse3D.clone(); target.z = 0;
+                        this.missiles.forEach(m => {
+                            if (m.userData.state === 'launching') return;
+                            m.lookAt(target); // Instant Turn
+                            const dir = new THREE.Vector3().subVectors(target, m.position).normalize();
+                            m.userData.velocity = dir.multiplyScalar(m.userData.speed);
+                        });
+                    } else {
+                        // IDLE: FREEZE (Stop moving)
+                         this.missiles.forEach(m => {
+                            if (m.userData.state === 'launching') return;
+                            m.userData.velocity.set(0,0,0); // Stop
+                        });
+                    }
+                }
+
+                this.mouse3D.lerp(this.liveMouse3D, 0.5);
+
+                // Update Entities
+                for (let i = this.missiles.length - 1; i >= 0; i--) {
+                    const m = this.missiles[i];
+                    
+                    // NEW: Missile Interception (Explode on Bullet)
+                    let intercepted = false;
+                    for (let j = this.enemyBullets.length - 1; j >= 0; j--) {
+                        const b = this.enemyBullets[j];
+                        // Collision check
+                        if (m.position.distanceTo(b.position) < 3) {
+                            // Create explosion
+                            this.createExplosion(m.position, m.userData.type);
+                            
+                            // Remove both
+                            this.scene.remove(m);
+                            this.missiles.splice(i, 1);
+                            
+                            this.scene.remove(b);
+                            this.enemyBullets.splice(j, 1);
+                            
+                            intercepted = true;
+                            break; 
+                        }
+                    }
+                    if (intercepted) continue; // Missile is gone, skip updates
+
+                    if (m.userData.state === 'launching') {
+                        m.userData.launchTime += dt;
+                        m.position.y = -60 + (m.userData.launchTime / 5.0) * 20;
+                        m.position.x = (Math.random() - 0.5) * 0.2;
+                        if (m.userData.launchTime >= 5.0) {
+                            m.userData.state = 'flying';
+                            const dir = new THREE.Vector3().subVectors(m.userData.targetPos, m.position).normalize();
+                            m.userData.velocity = dir.multiplyScalar(m.userData.finalSpeed);
+                            m.lookAt(m.position.clone().add(dir));
+                        }
+                    } else { m.position.add(m.userData.velocity); }
+                    if (m.position.distanceTo(this.camera.position) > 200) { this.scene.remove(m); this.missiles.splice(i, 1); }
+                    else if (this.mode === 'story' && m.userData.state !== 'launching') {
+                        let hit = false;
+                        for(const e of this.enemies) { if (m.position.distanceTo(e.position) < (m.userData.type === 'big'?6:4)) { this.createExplosion(m.position, m.userData.type); hit = true; break; } }
+                        if (!hit && this.bossActive && m.position.distanceTo(this.bossActive.mesh.position) < 10) { this.createExplosion(m.position, m.userData.type); hit = true; }
+                        if (hit) { this.scene.remove(m); this.missiles.splice(i, 1); }
+                    }
+                }
+                
+                // Bullet Updates
+                for (let i = this.enemyBullets.length - 1; i >= 0; i--) {
+                     const b = this.enemyBullets[i];
+                     b.position.add(b.userData.velocity.clone().multiplyScalar(dt));
+                     
+                     // NEW: Bounce off walls (Never go off screen sideways)
+                     if (b.position.x > 50 || b.position.x < -50) {
+                         b.userData.velocity.x *= -1; // Reverse X
+                         b.position.x = b.position.x > 50 ? 50 : -50;
+                     }
+                     
+                     // Still remove if it goes way below (hits player essentially)
+                     if(b.position.y < -50) { this.scene.remove(b); this.enemyBullets.splice(i,1); }
+                }
+                for (let i = this.enemies.length - 1; i >= 0; i--) {
+                     this.enemies[i].position.add(this.enemies[i].userData.velocity);
+                     if(this.enemies[i].position.y < -35) { this.damagePlayer(10); this.scene.remove(this.enemies[i]); this.enemies.splice(i,1); }
+                }
+                // Particle Updates
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    const p = this.particles[i]; p.age++; const t = p.age/p.maxAge;
+                    if(p.type==='sphere') {
+                         const pos = p.points.geometry.attributes.position.array;
+                         for(let j=0; j<p.velocities.length; j++) {
+                             p.velocities[j].multiplyScalar(0.95);
+                             pos[j*3]+=p.velocities[j].x; pos[j*3+1]+=p.velocities[j].y; pos[j*3+2]+=p.velocities[j].z;
+                         }
+                         p.points.geometry.attributes.position.needsUpdate = true;
+                         p.points.material.opacity = Math.max(0,1-t);
+                    } else if (p.type === 'fireball') {
+                         const scale = t < 0.2 ? (t/0.2)*p.maxRadius : p.maxRadius;
+                         p.mesh.scale.set(scale,scale,scale); p.mesh.material.opacity = Math.max(0,0.9*(1-t));
+                    } else {
+                        const pos = p.points.geometry.attributes.position.array;
+                        const v = p.points.userData.velocities;
+                        for(let j=0; j<v.length; j++) { v[j].multiplyScalar(0.95); pos[j*3]+=v[j].x; pos[j*3+1]+=v[j].y; pos[j*3+2]+=v[j].z; }
+                        p.points.geometry.attributes.position.needsUpdate = true;
+                        p.points.material.opacity = 1-t;
+                    }
+                    if(p.age>=p.maxAge) { if(p.points) this.scene.remove(p.points); if(p.mesh) this.scene.remove(p.mesh); this.particles.splice(i,1); }
+                }
+            }
+
+            damagePlayer(amount) {
+                if (this.mode === 'casual') return;
+                this.currentState.health = Math.max(0, this.currentState.health - amount);
+                this.onStateUpdate({ health: this.currentState.health });
+                if (this.currentState.health <= 0) { this.isRunning = false; this.onGameOver(); }
+            }
+
+            animate() { requestAnimationFrame(this.animate); this.update(); this.renderer.render(this.scene, this.camera); }
+            onResize() { this.camera.aspect = window.innerWidth/window.innerHeight; this.camera.updateProjectionMatrix(); this.renderer.setSize(window.innerWidth,window.innerHeight); }
+            onMouseMove(e) {
+                const vec = new THREE.Vector3((e.clientX/window.innerWidth)*2-1, -(e.clientY/window.innerHeight)*2+1, 0.5);
+                vec.unproject(this.camera);
+                const dir = vec.sub(this.camera.position).normalize();
+                this.liveMouse3D.copy(this.camera.position.clone().add(dir.multiplyScalar((0-this.camera.position.z)/dir.z)));
+                this.lastMouseTime = performance.now(); // Update time
+            }
+
+            handleClick(weapon) {
+                if (this.mode === 'casual') {
+                    this.missiles.forEach(m => this.createExplosion(m.position, m.userData.type));
+                    this.missiles.forEach(m => this.scene.remove(m));
+                    this.missiles = [];
+                    return true;
+                } else if (this.mode === 'story') { return this.spawnMissile(weapon); }
+                return false;
+            }
+
+            triggerDebug(key) {
+                if (this.mode !== 'casual') return;
+                if (key === 'p') {
+                     // SPAWN 25 RANDOM MISSILES
+                     for(let i=0; i<25; i++) {
+                         const type = Math.random() < 0.1 ? 'nuke' : Math.random() < 0.4 ? 'big' : 'normal';
+                         this.spawnMissile(type);
+                     }
+                }
+                if (key === 'o') { for(let i=0; i<100; i++) this.spawnMissile('nuke'); }
+            }
+
+            cleanupEntities() {
+                [...this.missiles, ...this.enemies, ...this.enemyBullets].forEach(o => this.scene.remove(o));
+                this.particles.forEach(p => { if(p.points)this.scene.remove(p.points); if(p.mesh)this.scene.remove(p.mesh); });
+                if (this.bossActive) this.scene.remove(this.bossActive.mesh);
+                if (this.particlesMesh) { this.scene.remove(this.particlesMesh); this.particlesMesh = null; }
+                if (this.starfield) { this.scene.remove(this.starfield); this.starfield = null; }
+                this.missiles = []; this.enemies = []; this.enemyBullets = []; this.particles = []; this.bossActive = null;
+                this.onStateUpdate({ bossStatus: null });
+            }
+            dispose() {
+                this.container.removeChild(this.renderer.domElement);
+                this.renderer.dispose();
+                window.removeEventListener('resize', this.onResize);
+                window.removeEventListener('mousemove', this.onMouseMove);
+            }
+        }
+
+        // --- APP COMPONENT ---
+        function App() {
+            const containerRef = useRef(null);
+            const engineRef = useRef(null);
+            const scrollRef = useRef(null);
+            const [mode, setMode] = useState('menu');
+            const [gameState, setGameState] = useState(INITIAL_STATE);
+            const [currentWeapon, setCurrentWeapon] = useState('normal');
+            const [shopTab, setShopTab] = useState('licenses');
+            
+            useEffect(() => {
+                const saved = localStorage.getItem(SAVE_KEY);
+                if (saved) try { setGameState({ ...INITIAL_STATE, ...JSON.parse(saved), health: 100, bossStatus: null }); } catch(e){}
+            }, []);
+            
+            const saveGame = useCallback((state) => { localStorage.setItem(SAVE_KEY, JSON.stringify({ ...state, bossStatus: null })); }, []);
+            const handleStateUpdate = useCallback((updates) => {
+                setGameState(prev => {
+                    const next = { ...prev, ...updates };
+                    if (engineRef.current) engineRef.current.currentState = next;
+                    if (updates.unlockedStage || updates.playerClass || updates.upgradeLevels) saveGame(next);
+                    return next;
+                });
+            }, [saveGame]);
+
+            useEffect(() => {
+                if (!containerRef.current || engineRef.current) return;
+                const engine = new GameEngine(containerRef.current, handleStateUpdate, () => setMode('gameover'), () => setMode('shop'), gameState);
+                engineRef.current = engine;
+                return () => { engine.dispose(); engineRef.current = null; };
+            }, [handleStateUpdate, gameState]);
+
+            useEffect(() => {
+                const handleKeyDown = (e) => {
+                    const k = e.key.toLowerCase();
+                    if (k === 'r') { if (mode === 'casual') engineRef.current?.startCasual(); else { if(confirm("Reset?")) { localStorage.removeItem(SAVE_KEY); setGameState(INITIAL_STATE); setMode('menu'); } } return; }
+                    if (engineRef.current) {
+                        if (['o', 'p'].includes(k)) engineRef.current.triggerDebug(k);
+                        if (k === '1') setCurrentWeapon('normal');
+                        if (k === '2' && gameState.playerClass !== 'c') setCurrentWeapon('big');
+                        if (k === '3' && gameState.playerClass === 'a') setCurrentWeapon('nuke');
+                    }
+                };
+                window.addEventListener('keydown', handleKeyDown);
+                return () => window.removeEventListener('keydown', handleKeyDown);
+            }, [gameState.playerClass, mode]);
+
+            useEffect(() => {
+                const handleMouseDown = () => {
+                    if ((mode !== 'story' && mode !== 'casual') || (mode === 'story' && gameState.ammo[currentWeapon] <= 0)) return;
+                    if (engineRef.current?.handleClick(currentWeapon) === true && mode === 'story') {
+                        handleStateUpdate({ ammo: { ...gameState.ammo, [currentWeapon]: gameState.ammo[currentWeapon] - 1 } });
+                    }
+                };
+                window.addEventListener('mousedown', handleMouseDown);
+                return () => window.removeEventListener('mousedown', handleMouseDown);
+            }, [mode, currentWeapon, gameState.ammo, handleStateUpdate]);
+
+            const startGame = (m, idx=0, isSide=false) => {
+                setMode(m);
+                if (m === 'casual') engineRef.current?.startCasual();
+                else {
+                     setGameState(prev => { const n = { ...prev, wave: idx+1, health: 100, bossStatus: null }; if(engineRef.current)engineRef.current.currentState=n; return n; });
+                     engineRef.current?.startStory(idx, isSide);
+                }
+            };
+            const nextWave = () => {
+                const next = gameState.wave;
+                handleStateUpdate({ wave: next+1, unlockedStage: Math.max(gameState.unlockedStage, next+1), health: 100, bossStatus: null });
+                setMode('story'); engineRef.current?.startStory(next);
+            };
+
+            return (
+                <div className="relative w-full h-screen overflow-hidden font-mono text-gray-800 select-none bg-teal-50">
+                    <div ref={containerRef} className="absolute inset-0 z-0" />
+                    {mode === 'story' && gameState.bossStatus && (
+                        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 w-3/4 max-w-4xl z-40">
+                            <div className="text-center text-red-500 font-black text-2xl uppercase animate-pulse">{gameState.bossStatus.name}</div>
+                            <div className="h-8 bg-black/60 border-4 border-red-900/80 rounded-full overflow-hidden relative"><div className="h-full bg-red-600" style={{ width: `${(gameState.bossStatus.hp/gameState.bossStatus.maxHp)*100}%` }} /></div>
+                        </div>
+                    )}
+                    {mode === 'menu' && (
+                        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-teal-50/80 backdrop-blur-sm">
+                            <h1 className="text-8xl font-black text-emerald-600 mb-8 tracking-tighter">MISSILE FUN</h1>
+                            <div className="flex flex-col gap-4 w-96">
+                                <button onClick={() => startGame('casual')} className="py-4 text-2xl font-bold border-2 border-emerald-500 bg-white rounded-xl shadow-lg flex justify-center gap-2"><Zap /> FUN MODE</button>
+                                <button onClick={() => setMode('map')} className="py-4 text-2xl font-bold border-2 border-green-600 bg-green-700 text-white rounded-xl shadow-lg flex justify-center gap-2"><Shield /> CAMPAIGN</button>
+                            </div>
+                        </div>
+                    )}
+                    {mode === 'gameover' && (
+                        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/90 text-white">
+                            <h2 className="text-6xl font-black text-red-500 mb-6 animate-pulse">GAME OVER</h2>
+                            <button onClick={() => setMode('menu')} className="px-8 py-3 bg-red-600 rounded font-bold">MENU</button>
+                        </div>
+                    )}
+                    {mode === 'map' && (
+                        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-teal-50">
+                            <div ref={scrollRef} onWheel={(e)=>scrollRef.current.scrollLeft+=e.deltaY} className="w-full max-w-7xl overflow-x-auto hide-scroll px-20 py-20 flex gap-12 bg-white/40 border-y border-teal-200" style={{minHeight:'450px'}}>
+                                {STAGES.map((s,i) => (
+                                    <div key={i} className="flex flex-col items-center shrink-0">
+                                        <button disabled={i+1 > gameState.unlockedStage} onClick={()=>startGame('story',i)} className={`w-20 h-20 border-4 rounded-full font-bold text-xl ${i+1<=gameState.unlockedStage?'bg-white border-teal-500':'bg-gray-200 border-gray-300 text-gray-400'}`}>{s.type==='boss'?'BOSS':i+1}</button>
+                                        {s.sidePath && i+1<=gameState.unlockedStage && s.type==='boss' && <button onClick={()=>startGame('story',i,true)} className="mt-4 w-16 h-16 bg-red-100 border-4 border-red-500 rounded-lg text-xs font-black text-red-800">ELITE</button>}
+                                    </div>
+                                ))}
+                            </div>
+                            <button onClick={()=>setMode('menu')} className="mt-8 px-6 py-2 bg-teal-700 text-white rounded font-bold">BACK</button>
+                        </div>
+                    )}
+                    {(mode==='story'||mode==='casual') && (
+                        <>
+                            <div className="fixed top-4 left-4 z-40"><button onClick={()=>setMode('menu')} className="bg-white px-4 py-2 rounded border shadow font-bold text-red-600">MENU</button></div>
+                            {mode==='story' && <div className="fixed top-4 right-4 z-40 bg-white px-6 py-2 rounded border border-yellow-500 font-bold text-yellow-600 text-2xl">${gameState.money}</div>}
+                            {mode==='story' && <div className="fixed bottom-6 left-6 flex gap-4 z-40 text-white">
+                                <div className={`p-2 border-2 rounded w-24 text-center ${currentWeapon==='normal'?'scale-110 shadow-lg bg-green-800':'bg-green-900/80'}`}><div className="text-xs">STD</div><div className="font-black text-xl">{gameState.ammo.normal}</div></div>
+                                {gameState.playerClass!=='c' && <div className={`p-2 border-2 rounded w-24 text-center ${currentWeapon==='big'?'scale-110 shadow-lg bg-blue-800':'bg-blue-900/80'}`}><div className="text-xs">BIG</div><div className="font-black text-xl">{gameState.ammo.big}</div></div>}
+                                {gameState.playerClass==='a' && <div className={`p-2 border-2 rounded w-24 text-center ${currentWeapon==='nuke'?'scale-110 shadow-lg bg-emerald-800':'bg-emerald-900/80'}`}><div className="text-xs">NUKE</div><div className="font-black text-xl">{gameState.ammo.nuke}</div></div>}
+                            </div>}
+                            {mode==='casual' && <div className="fixed top-4 right-4 z-40 bg-white/80 px-4 py-2 rounded text-xs font-bold text-gray-500">KEYS: P (25 Random), O (100 Nukes), R (Reset)</div>}
+                        </>
+                    )}
+                    {mode === 'shop' && (
+                        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-green-950/95 text-white">
+                            <h2 className="text-5xl font-bold text-green-400 mb-8">WAVE COMPLETE</h2>
+                            <div className="w-full max-w-4xl bg-black/40 p-6 rounded-xl mb-8 flex flex-col gap-4">
+                                <div className="flex justify-between border-b border-green-800 pb-4">
+                                    <div className="flex gap-4"><button onClick={()=>setShopTab('licenses')} className="px-4 py-2 bg-green-600 rounded">LICENSES</button><button onClick={()=>setShopTab('armory')} className="px-4 py-2 bg-green-600 rounded">ARMORY</button></div>
+                                    <div className="text-2xl text-yellow-400 font-bold">${gameState.money}</div>
+                                </div>
+                                {shopTab==='licenses' && <div className="grid grid-cols-2 gap-4">
+                                    <div className="p-4 bg-blue-900/40 border border-blue-500 rounded text-center"><h3 className="font-bold text-blue-400">Class B ($500)</h3><button disabled={gameState.playerClass!=='c'||gameState.money<500} onClick={()=>handleStateUpdate({playerClass:'b',money:gameState.money-500})} className="mt-2 w-full py-2 bg-blue-600 rounded disabled:opacity-50">BUY</button></div>
+                                    <div className="p-4 bg-green-900/40 border border-green-500 rounded text-center"><h3 className="font-bold text-green-400">Class A ($2000)</h3><button disabled={gameState.playerClass==='a'||gameState.money<2000} onClick={()=>handleStateUpdate({playerClass:'a',money:gameState.money-2000})} className="mt-2 w-full py-2 bg-green-600 rounded disabled:opacity-50">BUY</button></div>
+                                </div>}
+                                {shopTab==='armory' && <div className="grid grid-cols-2 gap-4 h-64 overflow-y-auto">
+                                    <div className="p-2 bg-orange-900/20 border border-orange-500 flex justify-between items-center"><span>Big Ammo x5</span><button disabled={gameState.money<200} onClick={()=>handleStateUpdate({ammo:{...gameState.ammo,big:gameState.ammo.big+5},money:gameState.money-200})} className="px-2 py-1 bg-orange-600 rounded">$200</button></div>
+                                    <div className="p-2 bg-yellow-900/20 border border-yellow-500 flex justify-between items-center"><span>Nuke x1</span><button disabled={gameState.money<500} onClick={()=>handleStateUpdate({ammo:{...gameState.ammo,nuke:gameState.ammo.nuke+1},money:gameState.money-500})} className="px-2 py-1 bg-yellow-600 rounded">$500</button></div>
+                                </div>}
+                            </div>
+                            <button onClick={nextWave} className="px-12 py-4 bg-green-500 text-black font-black text-2xl rounded-full hover:scale-105">NEXT WAVE</button>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
